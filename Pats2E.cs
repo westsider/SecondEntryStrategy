@@ -27,10 +27,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
 	public class Pats2E : Strategy
 	{
-		//private EMA EMA1;
-
+		
 		private bool Debug = false;
-		private bool AlertOn										= true;
+		private bool AlertOn = true;
 		
 		// Long Entries
 		private int LastBar = 0;
@@ -99,6 +98,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private bool BuyButtonIsOn = true;
 		private bool SellButtonIsOn = true;
 		
+		// atm
+		private string  atmStrategyId			= string.Empty;
+		private string  orderId					= string.Empty;
+		private bool	isAtmStrategyCreated	= false;
+		
 		#region Manage State
 		
 		protected override void OnStateChange()
@@ -142,6 +146,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 				PivotColor						= Brushes.WhiteSmoke;
 				ShortTextColor					= Brushes.Red;
 				ShortPivotColor					= Brushes.WhiteSmoke;
+				ATMstrategyName					= @"16T";
+				NoteFont									= new SimpleFont("Arial", 12);  
+				StatsBkgColor								= Brushes.WhiteSmoke;
+				StatsBkgOpacity								= 90; 
 				
 			}
 			else if (State == State.Configure)
@@ -149,11 +157,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				ClearOutputWindow();
 				startTime = long.Parse(StartTime.ToString("HHmmss"));
 			 	endTime = long.Parse(EndTime.ToString("HHmmss"));
-			}
-			else if (State == State.DataLoaded)
-			{				
-				//EMA1				= EMA(Close, 14);
-			}
+			} 
 			// Once the NinjaScript object has reached State.Historical, our custom control can now be added to the chart
 			else if (State == State.Historical)
 			  {
@@ -244,217 +248,219 @@ namespace NinjaTrader.NinjaScript.Strategies
 			///******************************************************************************************
 			///*********************************	Long	*********************************************
 			///******************************************************************************************
-			if ( BuyButtonIsOn ) { 
-				///**************	find new high or within 1 tick of high  ***************
+			
+			///**************	find new high or within 1 tick of high  ***************
+			
+			if (High[0] >= MAX(High, SwingLookBack)[1] - TickSize ) { 
+				RemoveDrawObject("NewHigh"+LastBar); 
+				if ( SwingMarkers ) { Draw.Diamond(this, "NewHigh"+CurrentBar, false, 0, High[0] + Padding, PivotColor); }
+				NewHigBarnum = CurrentBar;
+				NewHighPrice = High[0];
+				FoundFirstEntry = false;
+				SecondEntrySetupBar = false;
+				FirstEntryBarnum = 0;
+				FoundSecondEntry = false;
+				SeekingFailed2ELTarget = false;
+				Failed2ndEntryLongTgt = NewHighPrice + 100.0;
+			}
+			
+			///**************	find first entry long  ***************
+	
+			BarsSinceHigh = CurrentBar - NewHigBarnum;
+			if (BarsSinceHigh >= 2) {SeekingFirstEntry = true;}
+			double DistanceToHigh = NewHighPrice - High[0];
+			if (DistanceToHigh > 1.0 && High[0] > High[1]  && SeekingFirstEntry && !FoundFirstEntry ) {
+				Draw.Text(this, "1stEntry"+CurrentBar, "1", 0, Low[0] - Padding * 2, TextColor);
+				SeekingFirstEntry = false;
+				FoundFirstEntry = true;
+				FirstEntryBarnum = CurrentBar;
+				FailedSecondEntry = false;
 				
-				if (High[0] >= MAX(High, SwingLookBack)[1] - TickSize ) { 
-					RemoveDrawObject("NewHigh"+LastBar); 
-					if ( SwingMarkers ) { Draw.Diamond(this, "NewHigh"+CurrentBar, false, 0, High[0] + Padding, PivotColor); }
-					NewHigBarnum = CurrentBar;
-					NewHighPrice = High[0];
-					FoundFirstEntry = false;
-					SecondEntrySetupBar = false;
-					FirstEntryBarnum = 0;
-					FoundSecondEntry = false;
-					SeekingFailed2ELTarget = false;
-					Failed2ndEntryLongTgt = NewHighPrice + 100.0;
-				}
-				
-				///**************	find first entry long  ***************
-		
-				BarsSinceHigh = CurrentBar - NewHigBarnum;
-				if (BarsSinceHigh >= 2) {SeekingFirstEntry = true;}
-				double DistanceToHigh = NewHighPrice - High[0];
-				if (DistanceToHigh > 1.0 && High[0] > High[1]  && SeekingFirstEntry && !FoundFirstEntry ) {
-					Draw.Text(this, "1stEntry"+CurrentBar, "1", 0, Low[0] - Padding * 2, TextColor);
-					SeekingFirstEntry = false;
-					FoundFirstEntry = true;
-					FirstEntryBarnum = CurrentBar;
-					FailedSecondEntry = false;
-					
-					if ( AlertOn ) {
-						Alert("FirstEntry"+CurrentBar, Priority.High, "First Entry", 
-						NinjaTrader.Core.Globals.InstallDir+@"\sounds\"+ FirstEntrySound,10, 
-						Brushes.Black, Brushes.Yellow);  
-					}
-				}
-				
-				// end of bar if low is lower than prior print, remove the text, add a 1 below
-				if( FirstEntryBarnum == CurrentBar && Bars.TickCount >= TicksToRecalc ) {
-					RemoveDrawObject("1stEntry"+CurrentBar);
-					Draw.Text(this, "1stEntry"+CurrentBar, "1", 0, Low[0] - Padding * 2, TextColor);
-				}
-				
-				// must break low of 1st entry +  must be lower than high of 1st entry
-				int FirstEntryBarsAgo = CurrentBar - FirstEntryBarnum;
-				if ( FoundFirstEntry && Low[0] < Low[FirstEntryBarsAgo] 
-						&& Close[0] < High[FirstEntryBarsAgo] ) {
-					 	SecondEntrySetupBar = true;
-				}
-				
-				///**************	find second entry long ***************
-				 
-				if (IsFirstTickOfBar && FirstEntryBarnum != 0) {
-					BarsSinceFirstEntry = CurrentBar - FirstEntryBarnum;
-					if ( Debug ) 
-						{ Print( Time[0].ToShortDateString() + " \t" + Time[0].ToShortTimeString() 
-						+ " \t" + "BarNum: " + CurrentBar 
-						+ " \t" + "BarsSinceFirstEntry: " + BarsSinceFirstEntry );
-						}
-				}
-				
-				if (BarsSinceFirstEntry >=2 && SecondEntrySetupBar && FoundFirstEntry && !FoundSecondEntry) {
-					if( DistanceToHigh > 2.0 ) {
-						double EntryPrice = High[1] + TickSize;
-						LineName = "SecondEntryLine";
-						SecodEntryLongStop = MIN(Low, 3)[1] - TickSize;
-						LongRisk = (EntryPrice - SecodEntryLongStop) / TickSize;
-						
-						
-						DrawSecondEntryLine(EntryPrice, LineName, LongRisk);
-						if (High[0] > High[1] ) {
-							Draw.TriangleUp(this, "2EL"+CurrentBar, false, 0, Low[0] -Padding * 2, TextColor);
-							FoundSecondEntry = true;
-							SecondEntryBarnum = CurrentBar;
-							SecodEntryLongTarget = High[1] + TickSize + ((double)TargetInTicks * TickSize);
-							
-							LongTradeCount  += 1;
-							
-							if ( ShowTargetsAndStops ) {
-								Draw.Text(this, "tgt" + CurrentBar, "-", 0, SecodEntryLongTarget, TextColor);
-								Draw.Text(this, "tgtv" + CurrentBar, "+", 0, UpperValue, TextColor);
-								Draw.Text(this, "stop" + CurrentBar, "-", 0, SecodEntryLongStop, ShortTextColor);
-								// show risk
-								//Draw.Text(this, "LongRisk" + CurrentBar, LongRisk.ToString("N0"), 0, SecodEntryLongStop - (TickSize * 6), TextColor);
-							}
-							NewHighPrice = 0.0;
-							RemoveDrawObject(LineName+CurrentBar);
-							RemoveDrawObject(LineName+"Txt"+CurrentBar); 
-							RemoveEntryLines(LineName);
-							if ( AlertOn ) {
-								Alert("secondEntry"+CurrentBar, Priority.High, "Second Entry", 
-								NinjaTrader.Core.Globals.InstallDir+@"\sounds\"+ SecondEntrySound,10, 
-								Brushes.Black, Brushes.Yellow);  
-							}
-						}
-					}
-				}
-				
-				// end of bar if low is lower than prior print, remove the triangle, add a triangle below
-				if( SecondEntryBarnum == CurrentBar && Bars.TickCount >= TicksToRecalc ) {
-					// RemoveDrawObject("SecondEntryLine"+CurrentBar);
-					RemoveDrawObject("2EL"+CurrentBar);
-					Draw.TriangleUp(this, "2EL"+CurrentBar, false, 0, Low[0] - Padding * 2, TextColor);
-					
-					SecodEntryLongStop = Low[0] - TickSize;
-					RemoveDrawObject("stop"+CurrentBar);
-					Draw.Text(this, "stop" + CurrentBar, "-", 0, SecodEntryLongStop, Brushes.Red);
+				if ( AlertOn ) {
+					Alert("FirstEntry"+CurrentBar, Priority.High, "First Entry", 
+					NinjaTrader.Core.Globals.InstallDir+@"\sounds\"+ FirstEntrySound,10, 
+					Brushes.Black, Brushes.Yellow);  
 				}
 			}
+			
+			// end of bar if low is lower than prior print, remove the text, add a 1 below
+			if( FirstEntryBarnum == CurrentBar && Bars.TickCount >= TicksToRecalc ) {
+				RemoveDrawObject("1stEntry"+CurrentBar);
+				Draw.Text(this, "1stEntry"+CurrentBar, "1", 0, Low[0] - Padding * 2, TextColor);
+			}
+			
+			// must break low of 1st entry +  must be lower than high of 1st entry
+			int FirstEntryBarsAgo = CurrentBar - FirstEntryBarnum;
+			if ( FoundFirstEntry && Low[0] < Low[FirstEntryBarsAgo] 
+					&& Close[0] < High[FirstEntryBarsAgo] ) {
+				 	SecondEntrySetupBar = true;
+			}
+			
+			///**************	find second entry long ***************
+			 
+			if (IsFirstTickOfBar && FirstEntryBarnum != 0) {
+				BarsSinceFirstEntry = CurrentBar - FirstEntryBarnum;
+				if ( Debug ) 
+					{ Print( Time[0].ToShortDateString() + " \t" + Time[0].ToShortTimeString() 
+					+ " \t" + "BarNum: " + CurrentBar 
+					+ " \t" + "BarsSinceFirstEntry: " + BarsSinceFirstEntry );
+					}
+			}
+			
+			if (BarsSinceFirstEntry >=2 && SecondEntrySetupBar && FoundFirstEntry && !FoundSecondEntry) {
+				if( DistanceToHigh > 2.0 ) {
+					double EntryPrice = High[1] + TickSize;
+					LineName = "SecondEntryLine";
+					SecodEntryLongStop = MIN(Low, 3)[1] - TickSize;
+					LongRisk = (EntryPrice - SecodEntryLongStop) / TickSize;
+					
+					
+					DrawSecondEntryLine(EntryPrice, LineName, LongRisk);
+					if (High[0] > High[1] ) {
+						Draw.TriangleUp(this, "2EL"+CurrentBar, false, 0, Low[0] -Padding * 2, TextColor);
+						FoundSecondEntry = true;
+						SecondEntryBarnum = CurrentBar;
+						SecodEntryLongTarget = High[1] + TickSize + ((double)TargetInTicks * TickSize);
+						LongTradeCount  += 1;
+						if ( BuyButtonIsOn ) {  EnterWithATM(Long: true); }
+						
+						if ( ShowTargetsAndStops ) {
+							Draw.Text(this, "tgt" + CurrentBar, "-", 0, SecodEntryLongTarget, TextColor);
+							Draw.Text(this, "tgtv" + CurrentBar, "+", 0, UpperValue, TextColor);
+							Draw.Text(this, "stop" + CurrentBar, "-", 0, SecodEntryLongStop, ShortTextColor);
+							// show risk
+							//Draw.Text(this, "LongRisk" + CurrentBar, LongRisk.ToString("N0"), 0, SecodEntryLongStop - (TickSize * 6), TextColor);
+						}
+						NewHighPrice = 0.0;
+						RemoveDrawObject(LineName+CurrentBar);
+						RemoveDrawObject(LineName+"Txt"+CurrentBar); 
+						RemoveEntryLines(LineName);
+						if ( AlertOn ) {
+							Alert("secondEntry"+CurrentBar, Priority.High, "Second Entry", 
+							NinjaTrader.Core.Globals.InstallDir+@"\sounds\"+ SecondEntrySound,10, 
+							Brushes.Black, Brushes.Yellow);  
+						}
+					}
+				}
+			}
+			
+			// end of bar if low is lower than prior print, remove the triangle, add a triangle below
+			if( SecondEntryBarnum == CurrentBar && Bars.TickCount >= TicksToRecalc ) {
+				// RemoveDrawObject("SecondEntryLine"+CurrentBar);
+				RemoveDrawObject("2EL"+CurrentBar);
+				Draw.TriangleUp(this, "2EL"+CurrentBar, false, 0, Low[0] - Padding * 2, TextColor);
+				
+				SecodEntryLongStop = Low[0] - TickSize;
+				RemoveDrawObject("stop"+CurrentBar);
+				Draw.Text(this, "stop" + CurrentBar, "-", 0, SecodEntryLongStop, Brushes.Red);
+			}
+			
 			
 			///******************************************************************************************
 			///*********************************	Short	*********************************************
 			///******************************************************************************************
 			
-			if ( SellButtonIsOn ) { 
 			
-				///**************	find new low or within 1 tick of low  ***************
-				
-				if (Low[0] <= MIN(Low, SwingLookBack)[1] + TickSize ) { 
-					RemoveDrawObject("NewLow"+LastBar); 
-					//Draw.Diamond(this, "NewLow"+CurrentBar, false, 0, Low[0], PivotColor);
-					if ( SwingMarkers ) { Draw.Dot(this, "NewLow"+CurrentBar, false, 0, Low[0] - Padding, ShortPivotColor);}
-					NewLowBarnum = CurrentBar;
-					NewLowPrice = Low[0];
-					FoundFirstEntryShort = false;
-					SecondEntrySetupBarShort = false;
-					FirstEntryBarnumShort = 0;
-					FoundSecondEntryShort = false;
-					FailedSecondEntryShort = false; 
-					SeekingFailed2ESTarget = false;
-					Failed2ndEntryShortTgt = NewLowPrice - 100.0;
-				}
-				
-				///**************	find first entry short  ***************
-		
-				BarsSinceLow = CurrentBar - NewLowBarnum;
-				if (BarsSinceLow >= 2) {SeekingFirstEntryShort = true;}
-				double DistanceToLow = Low[0] - NewLowPrice;
-				if (DistanceToLow > 1.0 && Low[0] < Low[1]  && SeekingFirstEntryShort && !FoundFirstEntryShort ) {
-					Draw.Text(this, "1stEntryShort"+CurrentBar, "1", 0, High[0] + Padding * 2, ShortTextColor);
-					SeekingFirstEntryShort = false;
-					FoundFirstEntryShort = true;
-					FirstEntryBarnumShort = CurrentBar;
-					if ( AlertOn ) {
-						Alert("FirstEntryShort"+CurrentBar, Priority.High, "First Entry Short", 
-						NinjaTrader.Core.Globals.InstallDir+@"\sounds\"+ FirstEntrySound,10, 
-						Brushes.Black, Brushes.Yellow);  
-					}
-				}
-				
-				// end of bar if high is higher than prior print, remove the text, add a 1 below
-				if( FirstEntryBarnumShort == CurrentBar && Bars.TickCount >= TicksToRecalc ) {
-					RemoveDrawObject("1stEntryShort"+CurrentBar);
-					Draw.Text(this, "1stEntryShort"+CurrentBar, "1", 0, High[0] + Padding * 2, ShortTextColor);
-				}
-				
-				// must break high of 1st entry +  must be higher than low of 1st entry
-				int FirstEntryBarsAgoShort = CurrentBar - FirstEntryBarnumShort;
-				if ( FoundFirstEntryShort && High[0] > High[FirstEntryBarsAgoShort] 
-						&& Close[0] > Low[FirstEntryBarsAgoShort] ) {
-					 	SecondEntrySetupBarShort = true;
-				}
-						
-				
-				///**************	find second entry short ***************
-				 
-				if (IsFirstTickOfBar && FirstEntryBarnumShort != 0) {
-					BarsSinceFirstEntryShort = CurrentBar - FirstEntryBarnumShort;
-					if ( Debug ) 
-						{ Print( Time[0].ToShortDateString() + " \t" + Time[0].ToShortTimeString() 
-						+ " \t" + "BarNum: " + CurrentBar 
-						+ " \t" + "BarsSinceFirstEntryShort: " + BarsSinceFirstEntryShort );
-						}
-				}
-				
-				if (BarsSinceFirstEntryShort >=2 && SecondEntrySetupBarShort && FoundFirstEntryShort && !FoundSecondEntryShort) {
-					if( DistanceToLow > 2.0 ) {
-						double EntryPrice = Low[1] - TickSize;
-						SecodEntryShortStop = MAX(High, 3)[1] + TickSize;  
-						double ShortRisk = (SecodEntryShortStop - EntryPrice) / TickSize;
-						LineName = "SecondEntryLineShort";
-						DrawSecondEntryLine(EntryPrice, LineName, ShortRisk);
-						if (Low[0] < Low[1] ) {
-							Draw.TriangleDown(this, "2ES"+CurrentBar, false, 0, High[0] + Padding * 2, ShortTextColor);
-							FoundSecondEntryShort = true;
-							SecondEntryBarnumShort = CurrentBar;
-							
-							SecodEntryShortTarget = Low[1] - TickSize - ((double)TargetInTicks * TickSize);
-							SecodEntryShortStop = High[0] + TickSize;
-							ShortTradeCount  += 1;
-							
-							if ( ShowTargetsAndStops ) {
-								Draw.Text(this, "tgtS" + CurrentBar, "-", 0, SecodEntryShortTarget, TextColor);
-								Draw.Text(this, "tgtSv" + CurrentBar, "+", 0, LowerValue, TextColor);
-								Draw.Text(this, "stopS" + CurrentBar, "-", 0, SecodEntryShortStop, ShortTextColor);
-								// show risk
-								//Draw.Text(this, "ShortRisk" + CurrentBar, ShortRisk.ToString("N0"), 0, SecodEntryShortStop + (TickSize * 6), ShortTextColor);
-								RemoveEntryLines(LineName);
-							}
-							
-							NewLowPrice = 0.0;
-							RemoveDrawObject(LineName+CurrentBar);
-							RemoveDrawObject(LineName+"Txt"+CurrentBar); 
-							if ( AlertOn ) {
-								Alert("secondEntryShort"+CurrentBar, Priority.High, "Second Entry Short", 
-								NinjaTrader.Core.Globals.InstallDir+@"\sounds\"+ SecondEntrySound,10, 
-								Brushes.Black, Brushes.Yellow);  
-							}
-						}
-					}
-				}
 			
+			///**************	find new low or within 1 tick of low  ***************
+			
+			if (Low[0] <= MIN(Low, SwingLookBack)[1] + TickSize ) { 
+				RemoveDrawObject("NewLow"+LastBar); 
+				//Draw.Diamond(this, "NewLow"+CurrentBar, false, 0, Low[0], PivotColor);
+				if ( SwingMarkers ) { Draw.Dot(this, "NewLow"+CurrentBar, false, 0, Low[0] - Padding, ShortPivotColor);}
+				NewLowBarnum = CurrentBar;
+				NewLowPrice = Low[0];
+				FoundFirstEntryShort = false;
+				SecondEntrySetupBarShort = false;
+				FirstEntryBarnumShort = 0;
+				FoundSecondEntryShort = false;
+				FailedSecondEntryShort = false; 
+				SeekingFailed2ESTarget = false;
+				Failed2ndEntryShortTgt = NewLowPrice - 100.0;
 			}
+			
+			///**************	find first entry short  ***************
+	
+			BarsSinceLow = CurrentBar - NewLowBarnum;
+			if (BarsSinceLow >= 2) {SeekingFirstEntryShort = true;}
+			double DistanceToLow = Low[0] - NewLowPrice;
+			if (DistanceToLow > 1.0 && Low[0] < Low[1]  && SeekingFirstEntryShort && !FoundFirstEntryShort ) {
+				Draw.Text(this, "1stEntryShort"+CurrentBar, "1", 0, High[0] + Padding * 2, ShortTextColor);
+				SeekingFirstEntryShort = false;
+				FoundFirstEntryShort = true;
+				FirstEntryBarnumShort = CurrentBar;
+				if ( AlertOn ) {
+					Alert("FirstEntryShort"+CurrentBar, Priority.High, "First Entry Short", 
+					NinjaTrader.Core.Globals.InstallDir+@"\sounds\"+ FirstEntrySound,10, 
+					Brushes.Black, Brushes.Yellow);  
+				}
+			}
+			
+			// end of bar if high is higher than prior print, remove the text, add a 1 below
+			if( FirstEntryBarnumShort == CurrentBar && Bars.TickCount >= TicksToRecalc ) {
+				RemoveDrawObject("1stEntryShort"+CurrentBar);
+				Draw.Text(this, "1stEntryShort"+CurrentBar, "1", 0, High[0] + Padding * 2, ShortTextColor);
+			}
+			
+			// must break high of 1st entry +  must be higher than low of 1st entry
+			int FirstEntryBarsAgoShort = CurrentBar - FirstEntryBarnumShort;
+			if ( FoundFirstEntryShort && High[0] > High[FirstEntryBarsAgoShort] 
+					&& Close[0] > Low[FirstEntryBarsAgoShort] ) {
+				 	SecondEntrySetupBarShort = true;
+			}
+					
+			
+			///**************	find second entry short ***************
+			 
+			if (IsFirstTickOfBar && FirstEntryBarnumShort != 0) {
+				BarsSinceFirstEntryShort = CurrentBar - FirstEntryBarnumShort;
+				if ( Debug ) 
+					{ Print( Time[0].ToShortDateString() + " \t" + Time[0].ToShortTimeString() 
+					+ " \t" + "BarNum: " + CurrentBar 
+					+ " \t" + "BarsSinceFirstEntryShort: " + BarsSinceFirstEntryShort );
+					}
+			}
+			
+			if (BarsSinceFirstEntryShort >=2 && SecondEntrySetupBarShort && FoundFirstEntryShort && !FoundSecondEntryShort) {
+				if( DistanceToLow > 2.0 ) {
+					double EntryPrice = Low[1] - TickSize;
+					SecodEntryShortStop = MAX(High, 3)[1] + TickSize;  
+					double ShortRisk = (SecodEntryShortStop - EntryPrice) / TickSize;
+					LineName = "SecondEntryLineShort";
+					DrawSecondEntryLine(EntryPrice, LineName, ShortRisk);
+					if (Low[0] < Low[1] ) {
+						Draw.TriangleDown(this, "2ES"+CurrentBar, false, 0, High[0] + Padding * 2, ShortTextColor);
+						FoundSecondEntryShort = true;
+						SecondEntryBarnumShort = CurrentBar;
+						
+						SecodEntryShortTarget = Low[1] - TickSize - ((double)TargetInTicks * TickSize);
+						SecodEntryShortStop = High[0] + TickSize;
+						ShortTradeCount  += 1;
+						
+						if ( SellButtonIsOn ) { EnterWithATM(Long: false); }
+						
+						if ( ShowTargetsAndStops ) {
+							Draw.Text(this, "tgtS" + CurrentBar, "-", 0, SecodEntryShortTarget, TextColor);
+							Draw.Text(this, "tgtSv" + CurrentBar, "+", 0, LowerValue, TextColor);
+							Draw.Text(this, "stopS" + CurrentBar, "-", 0, SecodEntryShortStop, ShortTextColor);
+							// show risk
+							//Draw.Text(this, "ShortRisk" + CurrentBar, ShortRisk.ToString("N0"), 0, SecodEntryShortStop + (TickSize * 6), ShortTextColor);
+							RemoveEntryLines(LineName);
+						}
+						
+						NewLowPrice = 0.0;
+						RemoveDrawObject(LineName+CurrentBar);
+						RemoveDrawObject(LineName+"Txt"+CurrentBar); 
+						if ( AlertOn ) {
+							Alert("secondEntryShort"+CurrentBar, Priority.High, "Second Entry Short", 
+							NinjaTrader.Core.Globals.InstallDir+@"\sounds\"+ SecondEntrySound,10, 
+							Brushes.Black, Brushes.Yellow);  
+						}
+					}
+				}
+			}
+			
+			
 			// end of bar if high is higher than prior print, remove the triangle, add a triangle below
 			if( SecondEntryBarnumShort == CurrentBar && Bars.TickCount >= TicksToRecalc ) {
 				RemoveDrawObject("2ES"+CurrentBar);
@@ -519,6 +525,87 @@ namespace NinjaTrader.NinjaScript.Strategies
 			
 		}
 
+		
+		#region ATM Strategy
+		
+		private void EnterWithATM(bool Long) {
+			if (State < State.Realtime)
+  			return;
+			
+			
+			
+			Print("\n--------------------------------------------------------------------");
+			
+			// Submits an entry limit order at the current low price to initiate an ATM Strategy if both order id and strategy id are in a reset state
+			// **** YOU MUST HAVE AN ATM STRATEGY TEMPLATE NAMED 'AtmStrategyTemplate' CREATED IN NINJATRADER (SUPERDOM FOR EXAMPLE) FOR THIS TO WORK ****
+			if (orderId.Length == 0 && atmStrategyId.Length == 0)
+			{
+				isAtmStrategyCreated = false;  // reset atm strategy created check to false
+				atmStrategyId = GetAtmStrategyUniqueId();
+				orderId = GetAtmStrategyUniqueId();
+				if ( Long ) {
+					AtmStrategyCreate(OrderAction.Buy, OrderType.Limit, Close[0], 0, TimeInForce.Day, orderId, ATMstrategyName, atmStrategyId, (atmCallbackErrorCode, atmCallBackId) => {
+						//check that the atm strategy create did not result in error, and that the requested atm strategy matches the id in callback
+						if (atmCallbackErrorCode == ErrorCode.NoError && atmCallBackId == atmStrategyId)
+							isAtmStrategyCreated = true;
+						Print("LE");
+					});
+				} else {
+					AtmStrategyCreate(OrderAction.Sell, OrderType.Limit, Close[0], 0, TimeInForce.Day, orderId, ATMstrategyName, atmStrategyId, (atmCallbackErrorCode, atmCallBackId) => {
+						//check that the atm strategy create did not result in error, and that the requested atm strategy matches the id in callback
+						if (atmCallbackErrorCode == ErrorCode.NoError && atmCallBackId == atmStrategyId)
+							isAtmStrategyCreated = true;
+						Print("SE");
+					});
+				}
+			}
+			
+			// Check that atm strategy was created before checking other properties
+			if (!isAtmStrategyCreated)
+				return;
+			
+			// Check for a pending entry order
+			if (orderId.Length > 0)
+			{
+				string[] status = GetAtmStrategyEntryOrderStatus(orderId);
+				Print("\n\t\tWe already have ATM targets and stops\n");
+				// If the status call can't find the order specified, the return array length will be zero otherwise it will hold elements
+				if (status.GetLength(0) > 0)
+				{
+					Print("\n\t\tstatus.GetLength(0) > 0\n");
+					// Print out some information about the order to the output window
+					Print(Time[0].ToShortTimeString() + " The entry order average fill price is: " + status[0]
+					+ " filled amount: " + status[1]
+					+ " order state: " + status[2]);
+
+					// If the order state is terminal, reset the order id value
+					if (status[2] == "Filled" || status[2] == "Cancelled" || status[2] == "Rejected")
+						orderId = string.Empty;
+				}
+			} // If the strategy has terminated reset the strategy id
+			else if (atmStrategyId.Length > 0 && GetAtmStrategyMarketPosition(atmStrategyId) == Cbi.MarketPosition.Flat)
+				atmStrategyId = string.Empty;
+
+			if (atmStrategyId.Length > 0)
+			{
+				Print("\n\t\tatmStrategyId.Length > 0\n");
+				// You can change the stop price
+//				if (GetAtmStrategyMarketPosition(atmStrategyId) != MarketPosition.Flat)
+//					AtmStrategyChangeStopTarget(0, Low[0] - 3 * TickSize, "STOP1", atmStrategyId);
+
+				// Print some information about the strategy to the output window, please note you access the ATM strategy specific position object here
+				// the ATM would run self contained and would not have an impact on your NinjaScript strategy position and PnL
+				Print(Time[0].ToShortTimeString() + " market position: " + GetAtmStrategyMarketPosition(atmStrategyId) 
+					+ " quantity: " + GetAtmStrategyPositionQuantity(atmStrategyId) 
+					+ " average price: " + GetAtmStrategyPositionAveragePrice(atmStrategyId)
+					+ " Unrealized PnL: " + GetAtmStrategyUnrealizedProfitLoss(atmStrategyId));
+			}
+			Print("---------------------------------------------------------\n");
+		}
+		
+		#endregion
+	
+		
 		#region Helpers
 		
 		private void SetBollingetBands() {
@@ -538,9 +625,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 					//change color to red	
 					lineColor	= ShortTextColor;
 					RiskSpacer = 2.0;
-					EnterShortStopMarket(EntryPrice, "");
+					//EnterShortStopMarket(EntryPrice, "");
+					//EnterWithATM(Long: false);
 				} else {
-					EnterLongLimit(Convert.ToInt32(DefaultQuantity), EntryPrice, "");
+					//EnterLongLimit(Convert.ToInt32(DefaultQuantity), EntryPrice, "");
+					//EnterWithATM(Long: true);
 				}
 				if ( Debug ) 
 				{ 
@@ -580,20 +669,22 @@ namespace NinjaTrader.NinjaScript.Strategies
 				AllStats += "\n"; 
 				
 				if ( ShowFailed2ndEntries ) {
-					AllStats += "\n" + LongFailedTradeCount  + " Failed 2E Long Trades";
-					double WinPctFail2Elong = ((double)LongFailedEntryWins / (double)LongFailedTradeCount) * 100;
-					AllStats += "\n" + WinPctFail2Elong.ToString("N0") + "% Win";
-					
-					AllStats += "\n" + ShortFailedTradeCount + " Failed 2E Short Trades";
-					//AllStats += "\nShort Failed Wins " + ShortFailedEntryWins;
-					double WinPctFail2Eshort = ((double)ShortFailedEntryWins / (double)ShortFailedTradeCount) * 100;
-					AllStats += "\n" + WinPctFail2Eshort.ToString("N0") + "% Win";
+					if ( LongFailedTradeCount > 0 ) {
+						AllStats += "\n" + LongFailedTradeCount  + " Failed 2E Long Trades";
+						double WinPctFail2Elong = ((double)LongFailedEntryWins / (double)LongFailedTradeCount) * 100;
+						AllStats += "\n" + WinPctFail2Elong.ToString("N0") + "% Win";
+					}
+					if ( ShortFailedTradeCount > 0 ) {
+						AllStats += "\n" + ShortFailedTradeCount + " Failed 2E Short Trades";
+						//AllStats += "\nShort Failed Wins " + ShortFailedEntryWins;
+						double WinPctFail2Eshort = ((double)ShortFailedEntryWins / (double)ShortFailedTradeCount) * 100;
+						AllStats += "\n" + WinPctFail2Eshort.ToString("N0") + "% Win";
+					}
 					AllStats += "\n";
 				}
 				
-				
-				//Draw.TextFixed(this, "AllStats", AllStats, StatsLocation, TextColor, 
-				//	NoteFont, Brushes.Transparent, StatsBkgColor, StatsBkgOpacity); 
+				Draw.TextFixed(this, "AllStats", AllStats, StatsLocation, TextColor, 
+					NoteFont, Brushes.Transparent, StatsBkgColor, StatsBkgOpacity); 
 			}
 		}
 		
@@ -704,6 +795,40 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[PropertyEditor("NinjaTrader.Gui.Tools.TimeEditorKey")]
 		[Display(Name="EndTime", Order=13, GroupName="Parameters")]
 		public DateTime EndTime
+		{ get; set; }
+		
+		[NinjaScriptProperty]
+		[Display(Name="ATMstrategyName", Order=14, GroupName="Parameters")]
+		public string ATMstrategyName
+		{ get; set; }
+		
+		[NinjaScriptProperty]
+		[Display(Name="Font", Description="Font", Order=4, GroupName="Statistics")]
+		public SimpleFont NoteFont
+		{ get; set; }
+		
+		[NinjaScriptProperty]
+		[Display(Name="Location", Description="Stats Location", Order=5, GroupName="Statistics")]
+		public TextPosition StatsLocation
+		{ get; set; }
+		
+		[NinjaScriptProperty]
+		[XmlIgnore]
+		[Display(Name="Background Color", Order=6, GroupName="Statistics")]
+		public Brush StatsBkgColor
+		{ get; set; }
+
+		[Browsable(false)]
+		public string StatsBkgColorSerializable
+		{
+			get { return Serialize.BrushToString(StatsBkgColor); }
+			set { StatsBkgColor = Serialize.StringToBrush(value); }
+		}
+		
+		[NinjaScriptProperty]
+		[Range(1, int.MaxValue)]
+		[Display(Name="Background Opacity", Order=7, GroupName="Statistics")]
+		public int StatsBkgOpacity
 		{ get; set; }
 		
 		// ----------------------   colors   ---------------------------------------
