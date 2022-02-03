@@ -147,9 +147,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 				ShortTextColor					= Brushes.Red;
 				ShortPivotColor					= Brushes.WhiteSmoke;
 				ATMstrategyName					= @"16T";
-				NoteFont									= new SimpleFont("Arial", 12);  
-				StatsBkgColor								= Brushes.WhiteSmoke;
-				StatsBkgOpacity								= 90; 
+				NoteFont						= new SimpleFont("Arial", 12);  
+				StatsBkgColor					= Brushes.WhiteSmoke;
+				StatsBkgOpacity					= 90; 
+				UseTicksBackEntry				= false;
+				TicksFromEntry					= 3;
 				
 			}
 			else if (State == State.Configure)
@@ -322,7 +324,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 						SecondEntryBarnum = CurrentBar;
 						SecodEntryLongTarget = High[1] + TickSize + ((double)TargetInTicks * TickSize);
 						LongTradeCount  += 1;
-						if ( BuyButtonIsOn ) {  EnterWithATM(Long: true); }
+						if ( BuyButtonIsOn ) {  EnterWithATM(Long: true, EntryPrice: EntryPrice); }
 						
 						if ( ShowTargetsAndStops ) {
 							Draw.Text(this, "tgt" + CurrentBar, "-", 0, SecodEntryLongTarget, TextColor);
@@ -437,7 +439,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 						SecodEntryShortStop = High[0] + TickSize;
 						ShortTradeCount  += 1;
 						
-						if ( SellButtonIsOn ) { EnterWithATM(Long: false); }
+						if ( SellButtonIsOn ) { EnterWithATM(Long: false, EntryPrice: EntryPrice); }
 						
 						if ( ShowTargetsAndStops ) {
 							Draw.Text(this, "tgtS" + CurrentBar, "-", 0, SecodEntryShortTarget, TextColor);
@@ -528,14 +530,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 		
 		#region ATM Strategy
 		
-		private void EnterWithATM(bool Long) {
+		private void EnterWithATM(bool Long, double EntryPrice) {
 			if (State < State.Realtime)
   			return;
-			
-			
-			
 			Print("\n--------------------------------------------------------------------");
-			
 			// Submits an entry limit order at the current low price to initiate an ATM Strategy if both order id and strategy id are in a reset state
 			// **** YOU MUST HAVE AN ATM STRATEGY TEMPLATE NAMED 'AtmStrategyTemplate' CREATED IN NINJATRADER (SUPERDOM FOR EXAMPLE) FOR THIS TO WORK ****
 			if (orderId.Length == 0 && atmStrategyId.Length == 0)
@@ -543,15 +541,18 @@ namespace NinjaTrader.NinjaScript.Strategies
 				isAtmStrategyCreated = false;  // reset atm strategy created check to false
 				atmStrategyId = GetAtmStrategyUniqueId();
 				orderId = GetAtmStrategyUniqueId();
+				double ThisEntry = Close[0];
 				if ( Long ) {
-					AtmStrategyCreate(OrderAction.Buy, OrderType.Limit, Close[0], 0, TimeInForce.Day, orderId, ATMstrategyName, atmStrategyId, (atmCallbackErrorCode, atmCallBackId) => {
+					if ( UseTicksBackEntry ) { ThisEntry = EntryPrice - (TicksFromEntry * TickSize);}
+					AtmStrategyCreate(OrderAction.Buy, OrderType.Limit, ThisEntry, 0, TimeInForce.Day, orderId, ATMstrategyName, atmStrategyId, (atmCallbackErrorCode, atmCallBackId) => {
 						//check that the atm strategy create did not result in error, and that the requested atm strategy matches the id in callback
 						if (atmCallbackErrorCode == ErrorCode.NoError && atmCallBackId == atmStrategyId)
 							isAtmStrategyCreated = true;
 						Print("LE");
 					});
 				} else {
-					AtmStrategyCreate(OrderAction.Sell, OrderType.Limit, Close[0], 0, TimeInForce.Day, orderId, ATMstrategyName, atmStrategyId, (atmCallbackErrorCode, atmCallBackId) => {
+					if ( UseTicksBackEntry ) { ThisEntry = EntryPrice + (TicksFromEntry * TickSize);}
+					AtmStrategyCreate(OrderAction.Sell, OrderType.Limit, ThisEntry, 0, TimeInForce.Day, orderId, ATMstrategyName, atmStrategyId, (atmCallbackErrorCode, atmCallBackId) => {
 						//check that the atm strategy create did not result in error, and that the requested atm strategy matches the id in callback
 						if (atmCallbackErrorCode == ErrorCode.NoError && atmCallBackId == atmStrategyId)
 							isAtmStrategyCreated = true;
@@ -802,6 +803,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		public string ATMstrategyName
 		{ get; set; }
 		
+		// ----- Stats 
 		[NinjaScriptProperty]
 		[Display(Name="Font", Description="Font", Order=4, GroupName="Statistics")]
 		public SimpleFont NoteFont
@@ -830,6 +832,21 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[Display(Name="Background Opacity", Order=7, GroupName="Statistics")]
 		public int StatsBkgOpacity
 		{ get; set; }
+		
+		
+		//-----  orders types
+		[NinjaScriptProperty]
+		[Display(Name="Use Ticks Back Entry", Order=1, GroupName="Orders Types")]
+		public bool UseTicksBackEntry
+		{ get; set; }
+		
+		
+		[NinjaScriptProperty]
+		[Range(1, int.MaxValue)]
+		[Display(Name="Ticks From Entry", Order=2, GroupName="Orders Types")]
+		public int TicksFromEntry
+		{ get; set; }
+		
 		
 		// ----------------------   colors   ---------------------------------------
 		[NinjaScriptProperty]
