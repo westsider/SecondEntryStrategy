@@ -102,6 +102,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private string  atmStrategyId			= string.Empty;
 		private string  orderId					= string.Empty;
 		private bool	isAtmStrategyCreated	= false;
+		private bool	HaveResetWhileFlat	= false;
 		
 		#region Manage State
 		
@@ -247,6 +248,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 			SetBollingetBands();
 			if (ToTime(Time[0]) < startTime  || ToTime(Time[0]) > endTime) { return; }
 			
+			// If not flat print our open PnL -- TODO - !HaveResetWhileFlat
+		    if (Position.MarketPosition == MarketPosition.Flat && IsFirstTickOfBar) {
+		        Print("\n" + Time[0].ToShortDateString() + " " + Time[0].ToShortTimeString() + " Open PnL: " + Position.GetUnrealizedProfitLoss(PerformanceUnit.Points, Close[0]));
+				Print("Flat Position... reseting atmStrategyID\n");
+				atmStrategyId = string.Empty;
+				orderId = string.Empty;
+				HaveResetWhileFlat = true;
+			}
+			
 			///******************************************************************************************
 			///*********************************	Long	*********************************************
 			///******************************************************************************************
@@ -319,6 +329,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					
 					DrawSecondEntryLine(EntryPrice, LineName, LongRisk);
 					if (High[0] > High[1] ) {
+						EntryPrice = High[0];
 						Draw.TriangleUp(this, "2EL"+CurrentBar, false, 0, Low[0] -Padding * 2, TextColor);
 						FoundSecondEntry = true;
 						SecondEntryBarnum = CurrentBar;
@@ -439,7 +450,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 						SecodEntryShortStop = High[0] + TickSize;
 						ShortTradeCount  += 1;
 						
-						if ( SellButtonIsOn ) { EnterWithATM(Long: false, EntryPrice: EntryPrice); }
+						if ( SellButtonIsOn ) { 
+							Print("Triggering Short");
+							EnterWithATM(Long: false, EntryPrice: EntryPrice); }
 						
 						if ( ShowTargetsAndStops ) {
 							Draw.Text(this, "tgtS" + CurrentBar, "-", 0, SecodEntryShortTarget, TextColor);
@@ -539,25 +552,52 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (orderId.Length == 0 && atmStrategyId.Length == 0)
 			{
 				isAtmStrategyCreated = false;  // reset atm strategy created check to false
+				HaveResetWhileFlat = false;
 				atmStrategyId = GetAtmStrategyUniqueId();
 				orderId = GetAtmStrategyUniqueId();
 				double ThisEntry = Close[0];
 				if ( Long ) {
-					if ( UseTicksBackEntry ) { ThisEntry = EntryPrice - (TicksFromEntry * TickSize);}
-					AtmStrategyCreate(OrderAction.Buy, OrderType.Limit, ThisEntry, 0, TimeInForce.Day, orderId, ATMstrategyName, atmStrategyId, (atmCallbackErrorCode, atmCallBackId) => {
+					if ( UseTicksBackEntry ) { 
+						ThisEntry = EntryPrice - (TicksFromEntry * TickSize);
+						Print("LE tick back entry as limit at " + ThisEntry);
+						
+						AtmStrategyCreate(OrderAction.Buy, OrderType.Limit, ThisEntry, 0, TimeInForce.Day, orderId, ATMstrategyName, atmStrategyId, (atmCallbackErrorCode, atmCallBackId) => {
 						//check that the atm strategy create did not result in error, and that the requested atm strategy matches the id in callback
 						if (atmCallbackErrorCode == ErrorCode.NoError && atmCallBackId == atmStrategyId)
 							isAtmStrategyCreated = true;
-						Print("LE");
+						Print("LE normal entry as limit");
 					});
+					} else {
+						ThisEntry = EntryPrice;
+						Print("Enter Market long with limit at " + Close[0]);
+						if (ThisEntry == 0.0) { ThisEntry = Close[0];}
+						AtmStrategyCreate(OrderAction.Buy, OrderType.Limit, Close[0], 0, TimeInForce.Day, orderId, ATMstrategyName, atmStrategyId, (atmCallbackErrorCode, atmCallBackId) => {
+							//check that the atm strategy create did not result in error, and that the requested atm strategy matches the id in callback
+							if (atmCallbackErrorCode == ErrorCode.NoError && atmCallBackId == atmStrategyId)
+								isAtmStrategyCreated = true;
+							Print("LE normal entry as stop market at " + Close[0]);
+						});
+					}
 				} else {
-					if ( UseTicksBackEntry ) { ThisEntry = EntryPrice + (TicksFromEntry * TickSize);}
-					AtmStrategyCreate(OrderAction.Sell, OrderType.Limit, ThisEntry, 0, TimeInForce.Day, orderId, ATMstrategyName, atmStrategyId, (atmCallbackErrorCode, atmCallBackId) => {
+					if ( UseTicksBackEntry ) { 
+						ThisEntry = EntryPrice + (TicksFromEntry * TickSize);
+						Print("LE tick back entry as stop at " + ThisEntry);
+						AtmStrategyCreate(OrderAction.Sell, OrderType.StopMarket, ThisEntry, 0, TimeInForce.Day, orderId, ATMstrategyName, atmStrategyId, (atmCallbackErrorCode, atmCallBackId) => {
 						//check that the atm strategy create did not result in error, and that the requested atm strategy matches the id in callback
 						if (atmCallbackErrorCode == ErrorCode.NoError && atmCallBackId == atmStrategyId)
 							isAtmStrategyCreated = true;
-						Print("SE");
-					});
+						Print("SE Tick back entry");
+						});
+					} else {
+						ThisEntry = EntryPrice;
+						Print("Enter Market short with limit order at " + ThisEntry);
+						AtmStrategyCreate(OrderAction.Sell, OrderType.Limit, ThisEntry, 0, TimeInForce.Day, orderId, ATMstrategyName, atmStrategyId, (atmCallbackErrorCode, atmCallBackId) => {
+						//check that the atm strategy create did not result in error, and that the requested atm strategy matches the id in callback
+						if (atmCallbackErrorCode == ErrorCode.NoError && atmCallBackId == atmStrategyId)
+							isAtmStrategyCreated = true;
+						Print("SE normal entry");
+						});
+					}
 				}
 			}
 			
@@ -569,11 +609,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (orderId.Length > 0)
 			{
 				string[] status = GetAtmStrategyEntryOrderStatus(orderId);
-				Print("\n\t\tWe already have ATM targets and stops\n");
+				Print("\nWe already have ATM targets and stops\n");
 				// If the status call can't find the order specified, the return array length will be zero otherwise it will hold elements
 				if (status.GetLength(0) > 0)
 				{
-					Print("\n\t\tstatus.GetLength(0) > 0\n");
+					Print("\n\t\tstatus.GetLength(0)= " + status.Length.ToString());
 					// Print out some information about the order to the output window
 					Print(Time[0].ToShortTimeString() + " The entry order average fill price is: " + status[0]
 					+ " filled amount: " + status[1]
@@ -589,7 +629,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 
 			if (atmStrategyId.Length > 0)
 			{
-				Print("\n\t\tatmStrategyId.Length > 0\n");
+				Print("\n\t\tatmStrategyId.Length = " + atmStrategyId.Length.ToString());
 				// You can change the stop price
 //				if (GetAtmStrategyMarketPosition(atmStrategyId) != MarketPosition.Flat)
 //					AtmStrategyChangeStopTarget(0, Low[0] - 3 * TickSize, "STOP1", atmStrategyId);
@@ -602,6 +642,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 					+ " Unrealized PnL: " + GetAtmStrategyUnrealizedProfitLoss(atmStrategyId));
 			}
 			Print("---------------------------------------------------------\n");
+			
 		}
 		
 		#endregion
@@ -728,95 +769,87 @@ namespace NinjaTrader.NinjaScript.Strategies
 		#endregion
 		
 		#region Properties
-		[NinjaScriptProperty]
-		[Display(Name="SecondEntrySound", Order=1, GroupName="Parameters")]
-		public string SecondEntrySound
-		{ get; set; }
 
 		[NinjaScriptProperty]
-		[Display(Name="FirstEntrySound", Order=2, GroupName="Parameters")]
-		public string FirstEntrySound
-		{ get; set; }
-
-		[NinjaScriptProperty]
-		[Display(Name="FailedEntrySound", Order=3, GroupName="Parameters")]
-		public string FailedEntrySound
-		{ get; set; }
-
-		[NinjaScriptProperty]
-		[Display(Name="ShowStatistics", Order=4, GroupName="Parameters")]
-		public bool ShowStats
-		{ get; set; }
-
-		[NinjaScriptProperty]
-		[Display(Name="ShowTargetsAndStops", Order=5, GroupName="Parameters")]
+		[Display(Name="Show Targets And Stops", Order=5, GroupName="Parameters")]
 		public bool ShowTargetsAndStops
 		{ get; set; }
 
 		[NinjaScriptProperty]
-		[Range(1, int.MaxValue)]
-		[Display(Name="TargetInTicks", Order=6, GroupName="Parameters")]
-		public int TargetInTicks
-		{ get; set; }
-
-		[NinjaScriptProperty]
-		[Display(Name="SwingMarkers", Order=7, GroupName="Parameters")]
+		[Display(Name="Swing Markers", Order=7, GroupName="Parameters")]
 		public bool SwingMarkers
 		{ get; set; }
 
 		[NinjaScriptProperty]
 		[Range(1, int.MaxValue)]
-		[Display(Name="SwingPadding", Order=8, GroupName="Parameters")]
+		[Display(Name="Swing Padding", Order=8, GroupName="Parameters")]
 		public int SwingPadding
 		{ get; set; }
 
 		[NinjaScriptProperty]
 		[Range(1, int.MaxValue)]
-		[Display(Name="SwingLookBack", Order=9, GroupName="Parameters")]
+		[Display(Name="Swing LookBack", Order=9, GroupName="Parameters")]
 		public int SwingLookBack
 		{ get; set; }
 
 		[NinjaScriptProperty]
-		[Display(Name="SoundAlertsOn", Order=10, GroupName="Parameters")]
+		[Display(Name="Show Failed 2nd Entries", Order=11, GroupName="Parameters")]
+		public bool ShowFailed2ndEntries
+		{ get; set; }
+		
+		// ---- Sound
+		[NinjaScriptProperty]
+		[Display(Name="Second Entry Sound", Order=1, GroupName="Sound")]
+		public string SecondEntrySound
+		{ get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name="First Entry Sound", Order=2, GroupName="Sound")]
+		public string FirstEntrySound
+		{ get; set; }
+
+		[NinjaScriptProperty]
+		[Display(Name="Failed Entry Sound", Order=3, GroupName="Sound")]
+		public string FailedEntrySound
+		{ get; set; }
+		
+		[NinjaScriptProperty]
+		[Display(Name="Sound Alerts On", Order=4, GroupName="Sound")]
 		public bool SoundAlertsOn
 		{ get; set; }
 
-		[NinjaScriptProperty]
-		[Display(Name="ShowFailed2ndEntries", Order=11, GroupName="Parameters")]
-		public bool ShowFailed2ndEntries
-		{ get; set; }
-
+		// ----- Trading Times
 		[NinjaScriptProperty]
 		[PropertyEditor("NinjaTrader.Gui.Tools.TimeEditorKey")]
-		[Display(Name="StartTime", Order=12, GroupName="Parameters")]
+		[Display(Name="Start Time", Order=1, GroupName="Trading Times")]
 		public DateTime StartTime
 		{ get; set; }
 
 		[NinjaScriptProperty]
 		[PropertyEditor("NinjaTrader.Gui.Tools.TimeEditorKey")]
-		[Display(Name="EndTime", Order=13, GroupName="Parameters")]
+		[Display(Name="End Time", Order=2, GroupName="Trading Times")]
 		public DateTime EndTime
-		{ get; set; }
-		
-		[NinjaScriptProperty]
-		[Display(Name="ATMstrategyName", Order=14, GroupName="Parameters")]
-		public string ATMstrategyName
 		{ get; set; }
 		
 		// ----- Stats 
 		[NinjaScriptProperty]
-		[Display(Name="Font", Description="Font", Order=4, GroupName="Statistics")]
+		[Display(Name="Show Statistics", Order=1, GroupName="Statistics")]
+		public bool ShowStats
+		{ get; set; }
+		
+		[NinjaScriptProperty]
+		[Display(Name="Font", Description="Font", Order=2, GroupName="Statistics")]
 		public SimpleFont NoteFont
 		{ get; set; }
 		
 		[NinjaScriptProperty]
-		[Display(Name="Location", Description="Stats Location", Order=5, GroupName="Statistics")]
+		[Display(Name="Location", Description="Stats Location", Order=3, GroupName="Statistics")]
 		public TextPosition StatsLocation
 		{ get; set; }
 		
 		[NinjaScriptProperty]
 		[XmlIgnore]
-		[Display(Name="Background Color", Order=6, GroupName="Statistics")]
+		[Display(Name="Background Color", Order=4, GroupName="Statistics")]
 		public Brush StatsBkgColor
 		{ get; set; }
 
@@ -829,10 +862,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 		
 		[NinjaScriptProperty]
 		[Range(1, int.MaxValue)]
-		[Display(Name="Background Opacity", Order=7, GroupName="Statistics")]
+		[Display(Name="Background Opacity", Order=5, GroupName="Statistics")]
 		public int StatsBkgOpacity
 		{ get; set; }
 		
+		[NinjaScriptProperty]
+		[Range(1, int.MaxValue)]
+		[Display(Name="Target In Ticks", Order=6, GroupName="Statistics")]
+		public int TargetInTicks
+		{ get; set; }
 		
 		//-----  orders types
 		[NinjaScriptProperty]
@@ -845,6 +883,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 		[Range(1, int.MaxValue)]
 		[Display(Name="Ticks From Entry", Order=2, GroupName="Orders Types")]
 		public int TicksFromEntry
+		{ get; set; }
+		
+		[NinjaScriptProperty]
+		[Display(Name="ATM Strategy Name", Order=3, GroupName="Orders Types")]
+		public string ATMstrategyName
 		{ get; set; }
 		
 		
